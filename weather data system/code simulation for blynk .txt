@@ -1,0 +1,129 @@
+/*
+ * Project: ESP32 Environment Monitor (DHT, LDR)
+ * Platform: Wokwi
+ * Components:
+ * - ESP32
+ * - DHT22 (Temp/Humidity) -> GPIO 32 (ASSUMED FIX)
+ * - LDR (Light) -> GPIO 34
+ * - I2C LCD 16x02 -> SDA (GPIO 21), SCL (GPIO 22)
+ * - Cloud: Blynk Console
+ */
+
+// --- Blynk Configuration ---
+#define BLYNK_TEMPLATE_ID "TMPL33X1cCf1U"
+#define BLYNK_TEMPLATE_NAME "project 1"
+#define BLYNK_AUTH_TOKEN "S4yMub9OnYOzj-_xeGSVSIa02gGqs7HI"
+#define BLYNK_PRINT Serial
+
+// --- Library Includes ---
+#include <WiFi.h>
+#include <BlynkSimpleEsp32.h>
+#include <Wire.h>
+#include <LiquidCrystal_I2C.h> // For I2C LCD
+#include <DHT.h>                // For DHT22
+
+// --- WiFi Credentials ---
+char ssid[] = "Wokwi-GUEST"; // Use this for Wokwi simulation
+char pass[] = "";           // No password for Wokwi-GUEST
+
+// --- Hardware Pin Definitions ---
+// ** IMPORTANT: ASSUMES YOU MOVED DHT PIN FROM 21 TO 32 **
+#define DHTPIN 32        // DHT22 Data Pin
+#define DHTTYPE DHT22    // We are using the DHT22 sensor
+#define LDR_PIN 34       // LDR Analog Output (from JSON)
+
+// --- Global Objects ---
+LiquidCrystal_I2C lcd(0x27, 16, 2); // I2C address 0x27, 16x2 display
+DHT dht(DHTPIN, DHTTYPE);
+BlynkTimer timer;
+
+// Global variable to toggle LCD display
+bool showLightScreen = false;
+
+// This function is called every 2.5 seconds to send data
+void sendSensorData() {
+  
+  // --- 1. Read from DHT22 ---
+  float h = dht.readHumidity();
+  float t = dht.readTemperature(); // Read temperature in Celsius
+
+  // Check if any reads failed
+  if (isnan(h) || isnan(t)) {
+    Serial.println("Failed to read from DHT sensor!");
+    lcd.clear();
+    lcd.print("DHT SENSOR FAIL");
+    return;
+  }
+
+  // --- 2. Read from LDR ---
+  int ldrValue = analogRead(LDR_PIN);
+  // Map the 0-4095 value to a 0-100% light percentage
+  int lightPercent = map(ldrValue, 0, 4095, 0, 100);
+
+  // --- 3. Print to Serial Monitor (Debug) ---
+  Serial.println("--- Sensor Readings ---");
+  Serial.print("Temp (C): "); Serial.print(t); Serial.println(" *C");
+  Serial.print("Humidity: "); Serial.print(h); Serial.println(" %");
+  Serial.print("Light: "); Serial.print(lightPercent); Serial.println(" %");
+  Serial.println("---------------------");
+
+  // --- 4. Send to Blynk (Temp & Humidity only) ---
+  Blynk.virtualWrite(V1, t); // Send Temp (C) to Virtual Pin 1
+  Blynk.virtualWrite(V2, h); // Send Humidity to Virtual Pin 2
+
+  // --- 5. Display on LCD (Toggles screens) ---
+  lcd.clear();
+  
+  if (showLightScreen) {
+    // Show Light Density Screen
+    lcd.setCursor(0, 0);
+    lcd.print("Light Density:");
+    lcd.setCursor(0, 1);
+    lcd.print(lightPercent);
+    lcd.print(" %");
+  } else {
+    // Show Temp/Humidity Screen
+    lcd.setCursor(0, 0); // Top row
+    lcd.print("Temp: ");
+    lcd.print(t);
+    lcd.print(" C");
+
+    lcd.setCursor(0, 1); // Bottom row
+    lcd.print("Humidity: ");
+    lcd.print(h);
+    lcd.print("%");
+  }
+
+  // Toggle the flag for the next run
+  showLightScreen = !showLightScreen;
+}
+
+void setup() {
+  Serial.begin(115200);
+
+  // --- Initialize Sensors ---
+  lcd.init();
+  lcd.backlight();
+  dht.begin(); // Initialize the DHT sensor
+
+  lcd.setCursor(0, 0);
+  lcd.print("Connecting to");
+  lcd.setCursor(0, 1);
+  lcd.print("Blynk...");
+
+  // --- Connect to Blynk ---
+  Blynk.begin(BLYNK_AUTH_TOKEN, ssid, pass);
+
+  // --- Setup Timer ---
+  // Run 'sendSensorData' every 2500ms (2.5 seconds)
+  timer.setInterval(2500L, sendSensorData);
+
+  lcd.clear();
+  lcd.print("Connected!");
+  delay(1000);
+}
+
+void loop() {
+  Blynk.run();
+  timer.run();
+}

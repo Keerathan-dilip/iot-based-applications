@@ -1,0 +1,121 @@
+#include <WiFi.h>
+#include <ThingSpeak.h>
+#include <DHT.h>
+
+// --- WiFi and ThingSpeak Credentials ---
+const char* ssid = "Wokwi-GUEST"; // Wokwi's default WiFi
+const char* password = "";        // No password for Wokwi's guest network
+
+// =======================================================================
+// ==> PASTE YOUR THINGSPEAK DETAILS HERE <==
+unsigned long myChannelNumber = 3120891;      // <<-- REPLACE WITH YOUR CHANNEL ID
+const char * myWriteAPIKey = "GEBSZ18YR3LV548N";  // <<-- REPLACE WITH YOUR WRITE API KEY
+// =======================================================================
+
+// --- Pin Definition ---
+// DHT22 Data pin connected to ESP32 GPIO 27
+const int DHT_PIN = 27;     
+
+// --- Sensor Initialization ---
+#define DHTTYPE DHT22       // Define sensor type as DHT22
+DHT dht(DHT_PIN, DHTTYPE);
+WiFiClient client;
+
+// --- Global Variables for Timers ---
+unsigned long lastSerialPrintTime = 0;
+const unsigned long serialPrintInterval = 3000; // Print to Serial Monitor every 3 seconds
+
+unsigned long lastThingSpeakUpdateTime = 0;
+// ThingSpeak free tier has a minimum of 15 seconds between writes.
+const unsigned long thingSpeakUpdateInterval = 1500; // Update ThingSpeak every 15 seconds
+
+// Variables to store current sensor readings
+float currentHumidity = 0;
+float currentTempC = 0;
+float currentTempK = 0;
+
+void setup() {
+  Serial.begin(115200);
+  Serial.println("Wokwi Weather Station (DHT22 Only) Starting...");
+  Serial.println("Serial Monitor updates every 3 seconds. ThingSpeak graphs update every 15 seconds.");
+
+  // Initialize DHT sensor
+  dht.begin();
+  
+  // Connect to WiFi
+  WiFi.begin(ssid, password);
+  Serial.print("Connecting to WiFi");
+  while (WiFi.status() != WL_CONNECTED) {
+    delay(500);
+    Serial.print(".");
+  }
+  Serial.println("\nWiFi connected!");
+
+  // Initialize ThingSpeak
+  ThingSpeak.begin(client);
+}
+
+void loop() {
+  // --- Task 1: Read Sensor Data (as frequently as needed by the fastest timer, here 3s) ---
+  // Read sensor data only when we need to either print or send to ThingSpeak
+  // This helps to avoid constantly reading the DHT which can be slow and block.
+  // We'll read it just before either timer triggers.
+  
+  // --- Task 2: Print to Serial Monitor every 3 seconds ---
+  if (millis() - lastSerialPrintTime >= serialPrintInterval) { 
+    lastSerialPrintTime = millis();
+
+    // Read DHT22 Sensor Data
+    currentHumidity = dht.readHumidity();
+    currentTempC = dht.readTemperature();
+
+    // Check if DHT reads failed
+    if (isnan(currentHumidity) || isnan(currentTempC)) {
+      Serial.println("Failed to read from DHT sensor for serial print! Retrying...");
+      // We don't return here, as we still want ThingSpeak to potentially run with older data if needed
+      // or try again to read on the next cycle.
+    } else {
+      // Calculate Derived Values if read was successful
+      currentTempK = currentTempC + 273.15; 
+
+      // Print to Serial Monitor
+      Serial.println("--------------------");
+      Serial.println("Latest Readings (Serial Monitor):");
+      Serial.print("Temperature (C): "); Serial.println(currentTempC);
+      Serial.print("Temperature (K): "); Serial.println(currentTempK);
+      Serial.print("Humidity: "); Serial.println(currentHumidity);
+      Serial.println("--------------------");
+    }
+  }
+
+  // --- Task 3: Send Data to ThingSpeak every 15 seconds ---
+  if (millis() - lastThingSpeakUpdateTime >= thingSpeakUpdateInterval) { 
+    lastThingSpeakUpdateTime = millis();
+
+    // Re-read sensors just before sending to ThingSpeak to ensure fresh data
+    float thingSpeakHumidity = dht.readHumidity();
+    float thingSpeakTempC = dht.readTemperature();
+
+    // Check if DHT reads failed for ThingSpeak
+    if (isnan(thingSpeakHumidity) || isnan(thingSpeakTempC)) {
+      Serial.println("Failed to read from DHT sensor for ThingSpeak! Skipping update.");
+      return; // Skip ThingSpeak update this cycle if data is bad
+    }
+
+    float thingSpeakTempK = thingSpeakTempC + 273.15;
+
+    Serial.println("Attempting to send data to ThingSpeak...");
+    
+    ThingSpeak.setField(1, thingSpeakTempC);
+    ThingSpeak.setField(2, thingSpeakTempK);
+    ThingSpeak.setField(3, thingSpeakHumidity);
+    
+    int httpCode = ThingSpeak.writeFields(myChannelNumber, myWriteAPIKey);
+
+    if (httpCode == 200) {
+      Serial.println("ThingSpeak update successful.");
+    } else {
+      Serial.println("Problem updating ThingSpeak channel. HTTP error code " + String(httpCode));
+    }
+  }
+}

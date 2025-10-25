@@ -1,0 +1,44 @@
+{
+  "version": 1,
+  "author": "KEERATHAN DILIP",
+  "editor": "wokwi",
+  "parts": [
+    { "type": "wokwi-breadboard-half", "id": "bb1", "top": 6.6, "left": -74, "attrs": {} },
+    { "type": "board-esp32-devkit-c-v4", "id": "esp", "top": 86.4, "left": -244.76, "attrs": {} },
+    {
+      "type": "wokwi-lcd1602",
+      "id": "lcd1",
+      "top": 304,
+      "left": -13.6,
+      "attrs": { "pins": "i2c" }
+    },
+    {
+      "type": "wokwi-photoresistor-sensor",
+      "id": "ldr1",
+      "top": 95.7,
+      "left": 340.1,
+      "rotate": 90,
+      "attrs": {}
+    },
+    { "type": "wokwi-dht22", "id": "dht1", "top": -162.9, "left": 52.2, "attrs": {} }
+  ],
+  "connections": [
+    [ "esp:TX", "$serialMonitor:RX", "", [] ],
+    [ "esp:RX", "$serialMonitor:TX", "", [] ],
+    [ "esp:5V", "bb1:tp.1", "red", [ "h-9.45", "v28.8", "h163.2", "v-297.6" ] ],
+    [ "esp:GND.2", "bb1:tn.1", "black", [ "v-9.6", "h76.8", "v-76.8" ] ],
+    [ "bb1:tp.3", "bb1:bp.3", "red", [ "v0" ] ],
+    [ "bb1:tn.2", "bb1:bn.2", "black", [ "v0" ] ],
+    [ "ldr1:VCC", "bb1:bp.25", "red", [ "v48", "h-153.6", "v-67.2" ] ],
+    [ "ldr1:GND", "bb1:bn.25", "black", [ "v38.4", "h-182" ] ],
+    [ "lcd1:GND", "bb1:bn.1", "black", [ "h-28.8", "v-134.4" ] ],
+    [ "lcd1:VCC", "bb1:bp.1", "red", [ "h-38.4", "v-153.5" ] ],
+    [ "esp:21", "lcd1:SDA", "purple", [ "h19.2", "v211.2" ] ],
+    [ "esp:22", "lcd1:SCL", "gold", [ "h38.4", "v9.6" ] ],
+    [ "esp:34", "ldr1:AO", "green", [ "h-38.25", "v172.8", "h211.2", "v-96", "h480" ] ],
+    [ "dht1:VCC", "esp:3V3", "red", [ "v19.2", "h-355.2", "v19.2" ] ],
+    [ "esp:GND.1", "dht1:GND", "black", [ "h-19.05", "v-259.2", "h-9.6" ] ],
+    [ "dht1:SDA", "esp:32", "green", [ "v38.4", "h-383.9", "v57.6" ] ]
+  ],
+  "dependencies": {}
+}
