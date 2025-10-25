@@ -1,0 +1,169 @@
+#include <Servo.h>
+
+// --- Pin Definitions ---
+// Note the changes for the ultrasonic sensor
+const int pirPin = A0;
+const int gasPin = A1;
+const int relayMotor1Pin = 2; // Relay for DC Motor 1
+const int relayMotor2Pin = 3; // Relay for DC Motor 2
+const int buzzerPin = 4;
+const int servoPin = 5;
+const int trigPin = 6; // Ultrasonic sensor Trig pin
+const int echoPin = 7; // Ultrasonic sensor Echo pin
+const int switch1Pin = 8; // Master system switch
+const int switch2Pin = 9; // Mode switch
+
+// --- Adjustable Thresholds ---
+// **CALIBRATION NEEDED**: Check the "Gas Value" in the Serial Monitor in clean air and set this just above that value.
+const int gasThreshold = 400;      
+const int distanceThreshold = 15;  // Object detection distance in cm
+
+// --- Servo Angles ---
+const int servoHomeAngle = 90;
+const int servoActionAngle = 180;
+
+Servo myServo;
+
+// --- Debugging Flag ---
+// Set to 'true' to only print sensor values and ignore factory logic. Helps with calibration.
+bool debugMode = false;
+
+void setup() {
+  Serial.begin(9600);
+
+  // Set pin modes
+  pinMode(pirPin, INPUT);
+  pinMode(gasPin, INPUT);
+  pinMode(switch1Pin, INPUT_PULLUP);
+  pinMode(switch2Pin, INPUT_PULLUP);
+
+  pinMode(trigPin, OUTPUT);
+  pinMode(echoPin, INPUT);
+  
+  pinMode(relayMotor1Pin, OUTPUT);
+  pinMode(relayMotor2Pin, OUTPUT);
+  pinMode(buzzerPin, OUTPUT);
+
+  myServo.attach(servoPin);
+  myServo.write(servoHomeAngle);
+
+  // Set initial relay state (Motors OFF). Assumes LOW-trigger relays.
+  digitalWrite(relayMotor1Pin, HIGH);
+  digitalWrite(relayMotor2Pin, HIGH);
+
+  Serial.println("Smart Factory System Initializing...");
+  Serial.println("Allowing 20 seconds for gas sensor to warm up...");
+  delay(20000); // **IMPORTANT**: MQ-series gas sensors need time to heat up for accurate readings.
+  
+  if(debugMode) {
+    Serial.println("\n*** DEBUG MODE IS ON ***");
+    Serial.println("The system will only print sensor readings.\n");
+  } else {
+    Serial.println("Warm-up complete. System is active.");
+  }
+}
+
+void loop() {
+  if (debugMode) {
+    runDiagnostics(); // Run the debugging function and skip all other logic
+    return;
+  }
+
+  // 1. --- Safety Check (Highest Priority) ---
+  int gasValue = analogRead(gasPin);
+  Serial.print("Gas Value: ");
+  Serial.println(gasValue);
+
+  if (gasValue > gasThreshold) {
+    Serial.println("!!! GAS ALERT !!!");
+    triggerAlarm();
+    return;
+  } else {
+    noTone(buzzerPin);
+  }
+
+  // 2. --- System Operation ---
+  if (digitalRead(switch1Pin) == LOW) { // System is ON
+    int pirState = digitalRead(pirPin);
+    long distance = getUltrasonicDistance_HCSR04();
+
+    Serial.print("PIR: ");
+    Serial.print(pirState);
+    Serial.print(" | Distance: ");
+    Serial.print(distance);
+    Serial.println(" cm");
+
+    if (distance > 0 && distance < distanceThreshold) {
+      Serial.println("Item detected. Processing...");
+      digitalWrite(relayMotor1Pin, HIGH); // Stop conveyor
+      myServo.write(servoActionAngle);
+      delay(1000);
+      digitalWrite(relayMotor2Pin, LOW); // Start processing motor
+      delay(3000);
+      digitalWrite(relayMotor2Pin, HIGH); // Stop processing motor
+      myServo.write(servoHomeAngle);
+      delay(1000);
+    } else if (pirState == HIGH) {
+      Serial.println("Motion detected. Conveyor running.");
+      digitalWrite(relayMotor1Pin, LOW); // Start conveyor
+    } else {
+      digitalWrite(relayMotor1Pin, HIGH); // Stop conveyor
+    }
+
+  } else { // System is OFF
+    shutdownSystem();
+    // Add a small delay in the off-state to prevent spamming the serial monitor
+    delay(1000);
+  }
+
+  delay(200);
+}
+
+// --- Utility Functions ---
+
+long getUltrasonicDistance_HCSR04() {
+  // Clears the trigPin
+  digitalWrite(trigPin, LOW);
+  delayMicroseconds(2);
+  // Sets the trigPin on HIGH state for 10 micro seconds
+  digitalWrite(trigPin, HIGH);
+  delayMicroseconds(10);
+  digitalWrite(trigPin, LOW);
+  // Reads the echoPin, returns the sound wave travel time in microseconds
+  long duration = pulseIn(echoPin, HIGH);
+  // Calculating the distance
+  // Speed of sound wave divided by 2 (go and back)
+  return duration * 0.034 / 2;
+}
+
+void triggerAlarm() {
+  tone(buzzerPin, 1000, 500);
+  digitalWrite(relayMotor1Pin, HIGH);
+  digitalWrite(relayMotor2Pin, HIGH);
+}
+
+void shutdownSystem() {
+  digitalWrite(relayMotor1Pin, HIGH);
+  digitalWrite(relayMotor2Pin, HIGH);
+  myServo.write(servoHomeAngle);
+  noTone(buzzerPin);
+}
+
+// --- DEBUGGING FUNCTION ---
+// Prints raw values from all sensors to help with calibration and troubleshooting.
+void runDiagnostics() {
+  long distance = getUltrasonicDistance_HCSR04();
+  int gasValue = analogRead(gasPin);
+  int pirState = digitalRead(pirPin);
+
+  Serial.println("--- SENSOR DIAGNOSTICS ---");
+  Serial.print("Gas Sensor Raw Value: ");
+  Serial.println(gasValue);
+  Serial.print("Ultrasonic Distance (cm): ");
+  Serial.println(distance);
+  Serial.print("PIR Motion State (0/1): ");
+  Serial.println(pirState);
+  Serial.println("--------------------------\n");
+  
+  delay(1000); // Print values every second
+}
