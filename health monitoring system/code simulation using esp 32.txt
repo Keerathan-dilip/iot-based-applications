@@ -1,0 +1,178 @@
+#define BLYNK_PRINT Serial // IMPORTANT: Define this at the very top to enable Serial Monitor for Blynk
+
+// Include Wokwi's secrets file for secure storage of credentials
+#include "secrets.h"
+
+// Include necessary libraries for WiFi, Blynk, 1-Wire sensor, and I2C LCD
+#include <WiFi.h>
+#include <WiFiClient.h>
+#include <BlynkSimpleEsp32.h>
+#include <OneWire.h>
+#include <DallasTemperature.h>
+#include <LiquidCrystal_I2C.h> // For I2C LCD communication
+
+// --- Blynk Authentication & WiFi Credentials ---
+char auth[] = BLYNK_AUTH_TOKEN;
+char ssid[] = WIFI_SSID;
+char pass[] = WIFI_PASS;
+
+// --- DS18B20 Temperature Sensor Setup ---
+#define ONE_WIRE_BUS 4 // Connected to ESP32 GPIO 4 (matching your Wokwi diagram)
+OneWire oneWire(ONE_WIRE_BUS);
+DallasTemperature sensors(&oneWire);
+
+// --- I2C LCD Display Setup ---
+LiquidCrystal_I2C lcd(0x27, 16, 2); // Address 0x27, 16 columns, 2 rows
+
+// --- Global Variables for Health Data ---
+float currentTemperature = 0.0;
+float userHeight_cm = 170.0;
+float userWeight_kg = 70.0;
+float bmi = 0.0;
+
+// --- Blynk Timer Object ---
+BlynkTimer timer;
+
+// --- Function to update the local LCD display ---
+void updateLcdDisplay() {
+  lcd.clear(); // Clear the entire LCD screen before writing new data
+
+  // Display Temperature on the first line of the LCD
+  lcd.setCursor(0, 0); // Set cursor to column 0, row 0
+  lcd.print("Temp: ");
+  if (currentTemperature == DEVICE_DISCONNECTED_C) { // Check for sensor error
+    lcd.print("Error!");
+  } else {
+    lcd.print(currentTemperature, 1); // Print temperature with 1 decimal place
+    lcd.print((char)223);             // Print the degree symbol (ASCII code 223)
+    lcd.print("C");                   // Print 'C' for Celsius
+  }
+
+  // Display BMI on the second line of the LCD
+  lcd.setCursor(0, 1); // Set cursor to column 0, row 1
+  lcd.print("BMI: ");
+  lcd.print(bmi, 1); // Print BMI with 1 decimal place
+}
+
+// --- Function to read temperature from the DS18B20 sensor ---
+void getTemperature() {
+  Serial.println("Requesting temperatures...");
+  sensors.requestTemperatures(); // Send the command to get temperatures
+  currentTemperature = sensors.getTempCByIndex(0); // Read temperature in Celsius from the first sensor found
+
+  // --- DEBUGGING OUTPUT FOR TEMPERATURE ---
+  if (currentTemperature == DEVICE_DISCONNECTED_C) {
+    Serial.println("ERROR: DS18B20 sensor not detected or disconnected!");
+    // If sensor is disconnected, we might want to send 0 or a specific error code to Blynk,
+    // or simply not send anything. For now, we'll keep the value as is.
+  } else if (currentTemperature == -127.00) { // Specific error value for DallasTemperature
+    Serial.println("ERROR: DS18B20 returned invalid temperature (-127.00). Check wiring.");
+  }
+  
+  Serial.print("Raw Temperature Read: ");
+  Serial.print(currentTemperature);
+  Serial.println(" °C");
+
+  // Only send valid temperature data to Blynk
+  if (currentTemperature != DEVICE_DISCONNECTED_C && currentTemperature != -127.00) {
+    Blynk.virtualWrite(V1, currentTemperature); // Send to Blynk V1
+    Serial.println("Temperature sent to Blynk V1.");
+  } else {
+    Blynk.virtualWrite(V1, 0.0); // Send 0 or a placeholder to Blynk if there's an error
+    Serial.println("Temperature not sent to Blynk due to sensor error.");
+  }
+  
+  // Update the local LCD display with the latest data (will show "Error!" if disconnected)
+  updateLcdDisplay();
+}
+
+// --- Function to calculate BMI based on userHeight_cm and userWeight_kg ---
+void calculateBMI() {
+  if (userHeight_cm > 0 && userWeight_kg > 0) {
+    float height_m = userHeight_cm / 100.0;
+    bmi = userWeight_kg / (height_m * height_m);
+    Serial.print("BMI: ");
+    Serial.println(bmi);
+  } else {
+    bmi = 0.0;
+    Serial.println("Invalid Height or Weight for BMI calculation. Set to 0.");
+  }
+
+  Blynk.virtualWrite(V2, bmi);
+  Blynk.virtualWrite(V3, userHeight_cm);
+  Blynk.virtualWrite(V4, userWeight_kg);
+  Serial.println("BMI, Height, Weight sent to Blynk.");
+
+  updateLcdDisplay();
+}
+
+// --- Blynk callback function: triggered when data is sent to Virtual Pin V5 (Height Input) ---
+BLYNK_WRITE(V5) {
+  userHeight_cm = param.asFloat();
+  Serial.print("Received Height (V5): ");
+  Serial.println(userHeight_cm);
+  calculateBMI();
+}
+
+// --- Blynk callback function: triggered when data is sent to Virtual Pin V6 (Weight Input) ---
+BLYNK_WRITE(V6) {
+  userWeight_kg = param.asFloat();
+  Serial.print("Received Weight (V6): ");
+  Serial.println(userWeight_kg);
+  calculateBMI();
+}
+
+// --- Setup Function: Runs once when the ESP32 starts ---
+void setup() {
+  Serial.begin(115200); // Initialize serial communication for debugging
+
+  sensors.begin();      // Start the DS18B20 sensor library
+  // --- DEBUGGING: Check for DS18B20 presence ---
+  Serial.print("Locating DS18B20 devices...");
+  Serial.print("Found ");
+  Serial.print(sensors.getDeviceCount(), DEC);
+  Serial.println(" devices.");
+  if (sensors.getDeviceCount() == 0) {
+    Serial.println("CRITICAL: No DS18B20 sensor found! Please check wiring.");
+  }
+
+  // Initialize the I2C LCD
+  lcd.init();
+  lcd.backlight();
+  lcd.clear();
+  lcd.setCursor(0, 0);
+  lcd.print("Starting...");
+  lcd.setCursor(0, 1);
+  lcd.print("Connecting to WiFi");
+
+  // Connect to the Blynk server
+  Blynk.begin(auth, ssid, pass);
+  Serial.println("Attempting to connect to Blynk...");
+
+  // Send initial default height and weight to Blynk V3 and V4
+  Blynk.virtualWrite(V3, userHeight_cm);
+  Blynk.virtualWrite(V4, userWeight_kg);
+
+  // Configure the Blynk timer to call getTemperature() and calculateBMI() every 5000 milliseconds (5 seconds)
+  timer.setInterval(5000L, getTemperature);
+  timer.setInterval(5000L, calculateBMI);
+  
+  // Schedule an immediate (after a small delay) initial BMI calculation and temp read
+  timer.setTimeout(1000L, getTemperature); // Initial temperature read faster
+  timer.setTimeout(2000L, calculateBMI);
+
+  // Update LCD with Blynk connection status
+  lcd.clear();
+  lcd.setCursor(0,0);
+  lcd.print("Blynk Connected!");
+  lcd.setCursor(0,1);
+  lcd.print("Getting Data...");
+  
+  timer.setTimeout(4000L, [](){ lcd.clear(); });
+}
+
+// --- Loop Function: Runs repeatedly after setup() ---
+void loop() {
+  Blynk.run();
+  timer.run();
+}
